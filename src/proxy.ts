@@ -70,7 +70,7 @@ export class DevEcoProxy {
 
   constructor(opts: ProxyOptions = {}) {
     this.port = opts.port ?? 17128
-    this.hostname = opts.hostname ?? "127.0.0.1"
+    this.hostname = opts.hostname ?? "0.0.0.0"
     this.tokenStore = new JsonTokenStore()
     this.loginService = createLoginService(this.tokenStore)
   }

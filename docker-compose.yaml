@@ -5,6 +5,3 @@ services:
       dockerfile: Dockerfile
     ports:
       - "17128:17128"
-    environment:
-      - DEVECO_PROXY_PORT=17128
-      - DEVECO_PROXY_HOST=0.0.0.0

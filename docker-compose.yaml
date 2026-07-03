@@ -1,7 +1,16 @@
 services:
   opencode-deveco:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: node:20-slim
+    working_dir: /app
+    command: >
+      bash -c "
+        apt-get update &&
+        apt-get install -y git &&
+        rm -rf /var/lib/apt/lists/* &&
+        git clone https://github.com/yaoshining/opencode-deveco.git . &&
+        npm install &&
+        npm run build &&
+        node dist/proxy.js
+      "
     ports:
       - "17128:17128"

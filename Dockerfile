@@ -10,8 +10,6 @@ RUN npm install
 
 RUN npm run build
 
-ENV DEVECO_PROXY_HOST=0.0.0.0
-
 EXPOSE 17128
 
 ENTRYPOINT ["node", "dist/proxy.js"]

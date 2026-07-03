@@ -592,7 +592,9 @@ const isDirectRun = (() => {
 
 if (isDirectRun) {
   const portArg = process.argv.find((a) => a.startsWith("--port="))
-  const port = portArg ? parseInt(portArg.split("=")[1], 10) : 17128
+  const port = portArg ? parseInt(portArg.split("=")[1], 10) : Number(process.env.DEVECO_PROXY_PORT) || 17128
+  const hostArg = process.argv.find((a) => a.startsWith("--host="))
+  const hostname = hostArg ? hostArg.split("=")[1] : process.env.DEVECO_PROXY_HOST || "127.0.0.1"
 
   let proxy: DevEcoProxy | null = null
 
@@ -605,7 +607,7 @@ if (isDirectRun) {
   process.on("SIGTERM", shutdown)
   process.on("SIGINT", shutdown)
 
-  runProxy({ port })
+  runProxy({ port, hostname })
     .then((p) => {
       proxy = p
     })

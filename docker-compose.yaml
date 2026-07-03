@@ -1,0 +1,9 @@
+services:
+  opencode-deveco:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "17128:17128"
+    environment:
+      - DEVECO_PROXY_PORT=17128

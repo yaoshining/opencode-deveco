@@ -12,11 +12,10 @@
 import { exec } from "node:child_process"
 import { promisify } from "node:util"
 import crypto from "node:crypto"
-import http, { type IncomingMessage, type ServerResponse } from "node:http"
+import { type IncomingMessage, type ServerResponse } from "node:http"
 import { type TokenStore } from "./token-store.js"
 import {
   ACCESS_TOKEN_EXPIRES_MS,
-  CALLBACK_PORTS,
   DEFAULT_CONFIG,
   type LoginConfig,
   log,
@@ -99,8 +98,6 @@ export interface RefreshResult {
 // ---------------------------------------------------------------------------
 
 class LocalAuthServer {
-  private server: http.Server | null = null
-  private port: number
   private readonly clientSecret: string
   private readonly callbackPath = "/callback"
   private resolveCallback: ((value: CallbackData) => void) | null = null
@@ -109,6 +106,7 @@ class LocalAuthServer {
   private readonly baseUrl: string
   private readonly successRedirectUrl: string
   private readonly failedRedirectUrl: string
+  private port: number
 
   constructor(
     port: number,
@@ -124,36 +122,43 @@ class LocalAuthServer {
     this.failedRedirectUrl = failedRedirectUrl
   }
 
-  async start(): Promise<number> {
-    const portsToTry = [this.port, ...CALLBACK_PORTS.filter((p) => p !== this.port)]
-    for (const port of portsToTry) {
-      try {
-        const actualPort = await this.tryPort(port)
-        this.port = actualPort
-        return actualPort
-      } catch {
-        if (port === portsToTry[portsToTry.length - 1]) {
-          throw new Error(
-            "All auth server ports are in use. Please free up a port or close other DevEco / opencode instances.",
-          )
-        }
-      }
-    }
-    throw new Error("Failed to start server")
+  getPort(): number {
+    return this.port
   }
 
-  private tryPort(port: number): Promise<number> {
-    return new Promise((resolve, reject) => {
-      const server = http.createServer((req, res) => this.handleRequest(req, res))
-      server.on("error", (err: NodeJS.ErrnoException) => {
-        if (err.code === "EADDRINUSE") reject(new Error("Port is already in use"))
-        else reject(err)
-      })
-      server.listen(port, "0.0.0.0", () => {
-        this.server = server
-        resolve(port)
-      })
-    })
+  getCallbackPath(): string {
+    return this.callbackPath
+  }
+
+  handleRequest(req: IncomingMessage, res: ServerResponse): void {
+    const host = req.headers.host || `localhost:${this.port}`
+    const url = new URL(req.url ?? "", `http://${host}`)
+
+    if (url.pathname !== this.callbackPath) {
+      res.writeHead(404)
+      res.end("Not Found")
+      return
+    }
+
+    try {
+      const urlParams = url.searchParams
+      if (req.method === "POST") {
+        let body = ""
+        req.on("data", (chunk) => {
+          body += chunk.toString()
+        })
+        req.on("end", () => {
+          this.handleCallbackRequest(res, urlParams, body)
+        })
+      } else {
+        this.handleCallbackRequest(res, urlParams, "")
+      }
+    } catch (err) {
+      res.writeHead(500)
+      res.end("Internal Server Error")
+      log.error("local auth server request error", { error: String(err) })
+      this.rejectCallback?.(err instanceof Error ? err : new Error(String(err)))
+    }
   }
 
   waitForCallback(timeout: number = 30_000): Promise<CallbackData> {
@@ -191,54 +196,6 @@ class LocalAuthServer {
     }
   }
 
-  async stop(): Promise<void> {
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId)
-      this.timeoutId = null
-    }
-    return new Promise((resolve, reject) => {
-      if (!this.server) {
-        resolve()
-        return
-      }
-      this.server.close((error) => {
-        if (error) reject(error)
-        else resolve()
-      })
-    })
-  }
-
-  private handleRequest(req: IncomingMessage, res: ServerResponse): void {
-    const host = req.headers.host || `localhost:${this.port}`
-    const url = new URL(req.url ?? "", `http://${host}`)
-
-    if (url.pathname !== this.callbackPath) {
-      res.writeHead(404)
-      res.end("Not Found")
-      return
-    }
-
-    try {
-      const urlParams = url.searchParams
-      if (req.method === "POST") {
-        let body = ""
-        req.on("data", (chunk) => {
-          body += chunk.toString()
-        })
-        req.on("end", () => {
-          this.handleCallbackRequest(res, urlParams, body)
-        })
-      } else {
-        this.handleCallbackRequest(res, urlParams, "")
-      }
-    } catch (err) {
-      res.writeHead(500)
-      res.end("Internal Server Error")
-      log.error("local auth server request error", { error: String(err) })
-      this.rejectCallback?.(err instanceof Error ? err : new Error(String(err)))
-    }
-  }
-
   private handleCallbackRequest(
     res: ServerResponse,
     urlParams: URLSearchParams,
@@ -253,8 +210,6 @@ class LocalAuthServer {
       const siteId = params.get("siteId")
       const quit = params.get("quit")
 
-      // code must match the clientSecret we generated for this session;
-      // a mismatch means the request isn't our callback — silently ignore.
       if (!code || code !== this.clientSecret) {
         log.warn("login callback: code mismatch or missing, ignoring")
         return
@@ -297,10 +252,6 @@ class LocalAuthServer {
       this.rejectCallback?.(err instanceof Error ? err : new Error(String(err)))
     }
   }
-
-  getPort(): number {
-    return this.port
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +269,7 @@ class LoginService {
     this.config = { ...DEFAULT_CONFIG, ...config }
   }
 
-  async login(): Promise<LoginResult> {
+  async login(proxyPort: number): Promise<LoginResult> {
     try {
       const clientSecret = this.generateClientSecret()
 
@@ -329,14 +280,10 @@ class LoginService {
         this.config.successRedirectUrl,
         this.config.failedRedirectUrl,
       )
-      await this.server.start()
 
-      // Set up the callback promise BEFORE opening the browser page so that
-      // resolveCallback/rejectCallback are ready the instant the server starts
-      // receiving requests.
       const callbackPromise = this.server.waitForCallback(this.config.timeout)
 
-      await this.openLoginPage(this.server.getPort(), clientSecret)
+      await this.openLoginPage(proxyPort, clientSecret)
 
       const callbackData = await callbackPromise
 
@@ -364,10 +311,7 @@ class LoginService {
         error: err instanceof Error ? err.message : "Unknown error",
       }
     } finally {
-      if (this.server) {
-        await this.server.stop()
-        this.server = null
-      }
+      this.server = null
     }
   }
 
@@ -390,12 +334,20 @@ class LoginService {
     this.userInfo = null
   }
 
+  handleCallbackRequest(req: IncomingMessage, res: ServerResponse): void {
+    this.server?.handleRequest(req, res)
+  }
+
+  getActiveCallbackServer(): LocalAuthServer | null {
+    return this.server
+  }
+
   private generateClientSecret(): string {
     return crypto.randomUUID().replace(/-/g, "")
   }
 
-  private async openLoginPage(port: number, clientSecret: string): Promise<void> {
-    const loginUrl = `${this.config.baseUrl}/${this.config.authUrl}?port=${port}&appid=${this.config.appId}&code=${clientSecret}`
+  private async openLoginPage(proxyPort: number, clientSecret: string): Promise<void> {
+    const loginUrl = `${this.config.baseUrl}/${this.config.authUrl}?port=${proxyPort}&appid=${this.config.appId}&code=${clientSecret}`
 
     const platform = process.platform
     let command: string | null = null
@@ -423,9 +375,9 @@ class LoginService {
     log.info("Please open the following URL in your browser to login:")
     log.info(loginUrl)
     log.info(
-      `NOTE: After login, the browser will redirect to 127.0.0.1:${port}/callback. ` +
-        `If the proxy runs on a remote host, set up an SSH tunnel first: ` +
-        `ssh -L ${port}:127.0.0.1:${port} <remote-host>`,
+      `After login, the browser will redirect to 127.0.0.1:${proxyPort}/callback. ` +
+        `If the proxy runs on a remote host (e.g. NAS), set up an SSH tunnel first: ` +
+        `ssh -L ${proxyPort}:127.0.0.1:${proxyPort} <remote-host>`,
     )
   }
 
@@ -543,12 +495,14 @@ export function parseJwt(token: string): JwtPayload {
 // ---------------------------------------------------------------------------
 
 export interface LoginServiceHandle {
-  login(): Promise<LoginResult>
+  login(proxyPort: number): Promise<LoginResult>
   refreshToken(jwtToken: string): Promise<RefreshResult | null>
   logout(): Promise<void>
   isLoggedIn(): Promise<boolean>
   getUserInfo(): UserInfo | null
   cancel(): void
+  handleCallbackRequest(req: IncomingMessage, res: ServerResponse): void
+  getActiveCallbackServer(): LocalAuthServer | null
 }
 
 export function createLoginService(

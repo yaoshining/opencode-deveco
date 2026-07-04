@@ -398,7 +398,7 @@ class LoginService {
     const loginUrl = `${this.config.baseUrl}/${this.config.authUrl}?port=${port}&appid=${this.config.appId}&code=${clientSecret}`
 
     const platform = process.platform
-    let command: string
+    let command: string | null = null
     switch (platform) {
       case "win32":
         command = `start "" "${loginUrl}"`
@@ -407,18 +407,21 @@ class LoginService {
         command = `open "${loginUrl}"`
         break
       default:
-        command = `xdg-open "${loginUrl}"`
+        command = null
         break
     }
-    try {
-      await execAsync(command)
-    } catch (err) {
-      log.error("failed to open login page in browser", {
-        command,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      throw new Error("Failed to open login page", { cause: err })
+
+    if (command) {
+      try {
+        await execAsync(command)
+        return
+      } catch {
+        // fall through to logging the URL
+      }
     }
+
+    log.info("Please open the following URL in your browser to login:")
+    log.info(loginUrl)
   }
 
   private async getJwtToken(tempToken: string): Promise<string> {

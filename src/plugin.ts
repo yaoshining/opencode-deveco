@@ -248,7 +248,7 @@ export const DevEcoPlugin: Plugin = async (input: PluginInput): Promise<Hooks> =
               method: "auto" as const,
               async callback() {
                 resetModelCache()
-                const result = await loginService.login(PROXY_PORT)
+                const result = await loginService.login()
                 if (!result.success) {
                   return {
                     type: "failed" as const,

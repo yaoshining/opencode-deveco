@@ -154,7 +154,7 @@ export class DevEcoProxy {
 
     // Fall back to interactive browser login.
     log.info("no valid DevEco token; starting browser login")
-    const result = await this.loginService.login(this.port)
+    const result = await this.loginService.login()
     if (!result.success || !result.userInfo) {
       throw new Error(result.error || "DevEco login failed")
     }
@@ -188,7 +188,7 @@ export class DevEcoProxy {
       }
 
       if (p === "/login") {
-        const result = await this.loginService.login(this.port)
+        const result = await this.loginService.login()
         if (!result.success || !result.userInfo) {
           return this.json(res, 401, { error: result.error || "login failed" })
         }
@@ -203,11 +203,6 @@ export class DevEcoProxy {
           user: result.userInfo.userName,
           expires_in_ms: ACCESS_TOKEN_EXPIRES_MS,
         })
-      }
-
-      if (p === "/callback") {
-        this.loginService.handleCallbackRequest(req, res)
-        return
       }
 
       if (p === "/logout") {

@@ -149,7 +149,7 @@ class LocalAuthServer {
         if (err.code === "EADDRINUSE") reject(new Error("Port is already in use"))
         else reject(err)
       })
-      server.listen(port, "127.0.0.1", () => {
+      server.listen(port, "0.0.0.0", () => {
         this.server = server
         resolve(port)
       })
@@ -422,6 +422,11 @@ class LoginService {
 
     log.info("Please open the following URL in your browser to login:")
     log.info(loginUrl)
+    log.info(
+      `NOTE: After login, the browser will redirect to 127.0.0.1:${port}/callback. ` +
+        `If the proxy runs on a remote host, set up an SSH tunnel first: ` +
+        `ssh -L ${port}:127.0.0.1:${port} <remote-host>`,
+    )
   }
 
   private async getJwtToken(tempToken: string): Promise<string> {
